@@ -115,7 +115,7 @@ atlas/areas/{slug}/
 
 Areas are not initiatives. Initiatives have a bounded outcome and end; areas are permanent until retired. Recurring maintenance work for an area lives in `gtd/recurring/`, not as initiatives.
 
-**Engagement containers — optional, surfaced in onboarding.** Onboarding's role-map phase asks *"What kinds of named, ongoing, relationship-shaped contexts do you work in?"* Operator picks zero or more. **A user can be founder + parent + researcher concurrently** (see `_workdesk/operator-profile.md`); engagement containers and `areas/` coexist freely.
+**Engagement containers — optional, surfaced in onboarding.** Onboarding's role-map phase asks *"What kinds of named, ongoing, relationship-shaped contexts do you work in?"* Operator picks zero or more. **A user can be consultant + founder + parent concurrently** (see `_workdesk/operator-profile.md`); engagement containers and `areas/` coexist freely.
 
 | Role-map prompt | Resulting container | 4-item folder per instance | Typical instances |
 |---|---|---|---|
@@ -314,10 +314,13 @@ created: 2026-04-26
 
 **Recurring lifecycle:**
 - Recurring items live in `gtd/recurring/`, **not** in `actions/next/` permanently
-- **weekly-review** signal scans `gtd/recurring/schedules/` for items where `next_due <= today + 7 days` and surfaces them
-- **daily-plan** signal includes due items in its top section
+- **weekly-review** signal scans `gtd/recurring/schedules/` for items where `status: active` AND `next_due <= today + 7 days`
+- **daily-plan** signal includes due items in its top section, filtered to `status: active`
+- **vault-improvements** "recurring items overdue" check filters to `status: active`
 - **Promotion to action** is operator-confirmed (or auto when `cadence: daily` and operator opts in): creates a transient action in `gtd/actions/next/` with `parent: "[[gtd/recurring/schedules/{slug}]]"`
 - **Completion** of the promoted action triggers `next_due` roll-forward by the cadence (weekly → +7d, monthly → +1mo); event logged
+- **Pause** (`status: paused`) — drops out of all scans; `next_due` does not roll. Resume by setting `status: active`.
+- **Retire** (`status: retired`) — terminal state; drops out of all scans permanently. File stays in place for historical reference; not moved to archive (no `gtd/archive/recurring/` folder in V1).
 - Checklists are not promoted automatically; operator runs them via `/checklist {slug}` which materializes the steps as actions
 
 This keeps GTD's clarity (actions are still the unit of doing) while making real-life maintenance work first-class.
@@ -327,7 +330,7 @@ This keeps GTD's clarity (actions are still the unit of doing) while making real
 ```yaml
 ---
 type: inbox-item
-prefix: REVIEW                                         # REVIEW | ACTION | QUESTION | CONTENT | AWARENESS
+prefix: REVIEW                                         # REVIEW | ACTION | QUESTION | AWARENESS
 target: "[[atlas/decisions/2026-04-23-dudley-scope-change]]"
 source: "[[atlas/meetings/2026-04-23-dudley-weekly]]"
 created: 2026-04-26
@@ -353,11 +356,6 @@ One-line description of why this needs review.
 
 **Default at action-creation time.** When operator creates work and the project-vs-action test is ambiguous ("am I going to be engaged across multiple sessions?"), default to **action**. Promote to project later via `/promote-to-project {action-slug}` if it grows. This is the lower-cost mistake — orphaned projects (over-promotion) sit empty and shame the operator; over-flat actions just need promotion when they earn it.
 
-**Action vs project test (the AI-era reframe):**
-- *Single-session execution by Claude or operator* → **action** in `gtd/actions/next/`, can `parent:` an engagement directly
-- *Multi-session operator attention required* → **project** in `gtd/projects/` (personal focus) OR **initiative** in `atlas/initiatives/` (engagement-tied)
-- The test is universal: *am I going to be engaged across multiple sessions?*
-
 **Pre-built declarations shipped with bootstrap:**
 - `_workdesk/objects/action.md` — action format + lifecycle
 - `_workdesk/objects/project.md` — project format + scan locations (`gtd/projects/`, `atlas/initiatives/`)
@@ -377,7 +375,7 @@ intel/
       2026-04-26-daily-plan.md
       _archive/2026-03/   # archived after 30 days
     weekly/               # weekly review — low cadence, no archive
-      2026-04-week-17.md
+      2026-04-20-weekly-review.md
   observations/           # patterns Claude surfaces
     _archive/{year-month}/  (when it earns it)
   vault-improvements/     # the self-improvement loop — no archive (history valuable)
@@ -399,7 +397,7 @@ schedule: daily | weekly | on-demand | triggered
 
 **Signal declaration** at `_workdesk/signals/{type}.md`:
 - **Identity** — name, folder location, file-naming pattern
-- **Sources** — what it gathers from (calendar, email, atlas, log.md, etc.)
+- **Sources** — what it gathers from (calendar, email, atlas, `system/events/`, etc.)
 - **Format** — frontmatter + body sections Claude follows
 - **Schedule** — on-demand, daily, weekly, event-triggered
 - **Output** — where it lands; whether it drops a `[REVIEW]` inbox pointer
@@ -478,7 +476,7 @@ system/
 
 **Why monthly event files instead of a single rolling log:** simpler implementation, no rotation race condition, append-only semantics are trivial, bounded reads (last 1-2 monthly files cover a typical session window). The rotation hook is gone; the file path itself encodes the rotation.
 
-**Raw sources persist after processing.** Transcripts, bookmarks, captures stay in their folder — never deleted. Frontmatter flips `processed: true` and `processed-into: ["[[...]]"]` lists the atlas/intel notes that came from it. Per-source-type rule: `move-after-processing: false | "_archive/{year-month}/"`. Default = false (keep in main folder).
+**Raw sources persist after processing.** Transcripts and captures stay in their folder — never deleted. Frontmatter flips `processed: true` and `processed-into: ["[[...]]"]` lists the atlas/intel notes that came from it. Per-source-type rule: `move-after-processing: false | "_archive/{year-month}/"`. Default = false (keep in main folder).
 
 **Binaries and media** — images, audio, video, screenshots, PDFs live in `system/media/` co-located with the source that produced them:
 
@@ -495,7 +493,7 @@ Atlas/intel notes embed media via standard Obsidian links (`![[system/media/2026
 ```yaml
 ---
 type: source
-source-kind: transcript | bookmark | session-log | intake | other
+source-kind: transcript | session-log | intake | other
 date: 2026-04-26
 processed: false                # flips to true after atlas/intel extraction
 processed-into: ["[[...]]"]    # backlinks to notes produced from this source
@@ -549,6 +547,9 @@ A `PostToolUse` hook in `_workdesk/settings.json` fires after Write/Edit/Bash, b
 8. `action-completed` (next → archive, or recurring `next_due` rolled forward)
 9. `signal-generated` (daily-plan, weekly-review, vault-improvements)
 10. `declaration-changed` (object/signal/source/practice/tool/rule edited)
+11. `object-archived` (project, initiative, engagement, or area moved to archive; inbound-link rewrites recorded in the same event)
+
+The parenthetical scopes in classes 4 and 9 are illustrative, not exhaustive. Any atlas object type declared via `/define-object` produces `object-created` events; any signal type declared via `/define-signal` produces `signal-generated` events. The hook categorizes by zone-appropriate write, not by the named subtype.
 
 Write line format: `YYYY-MM-DD HH:MM | event-class | target | result-or-context`. Append-only into the current month's file: `system/events/{YYYY-MM}.md`. No rotation hook needed — month rollover happens because the path includes the month.
 
@@ -590,11 +591,9 @@ Editing `_workdesk/{file}` IS editing `.claude/{file}` — same underlying file.
 - **Obsidian Sync** — does not sync symlinks. The `.claude` alias exists only on the device that ran bootstrap; other devices see `_workdesk/` (the real directory) directly. Vault content (atlas/, gtd/, intel/, system/, personal/) syncs normally.
 - **Dropbox / Google Drive** — vary by provider; if either path shows as a 0-byte file in Obsidian on another device, the provider is following the link. Resolution: turn off "follow symlinks" in the sync client, or keep Claude Code use confined to one device.
 
-Windows fallback: install the "Show Hidden Files" Obsidian plugin (Windows symlinks require admin/developer mode, which is friction).
-
 ### Operator profile — first-class artifact for mixed personas
 
-V1 ships `_workdesk/operator-profile.md` as a required control-plane file. This is what makes mixed-persona users workable — a person can be founder + parent + researcher concurrently, and the profile captures all three.
+V1 ships `_workdesk/operator-profile.md` as a required control-plane file. This is what makes mixed-persona users workable — a person can be consultant + founder + parent concurrently, and the profile captures all three.
 
 **Format:**
 
@@ -739,12 +738,12 @@ Weekly signal — **suppressed for first 14 days** so weekly-review stabilizes f
 - **Broken wikilinks** — Obsidian-style `[[...]]` references whose target file no longer exists (typically caused by archive moves, renames, or manual deletes)
 - **Missing required frontmatter** — atlas notes without `source:`, signals without `sources:`, etc.
 - **Oversized media** in `system/media/` (>50MB single file)
-- **Recurring items overdue** (`next_due` past today by > one cadence interval)
+- **Recurring items overdue** (`status: active` items where `next_due` is past today by > one cadence interval)
 
 Outputs `[REVIEW]` inbox pointers for each holistic recommendation. Operator confirms or dismisses. Vault evolves over time.
 
 **Archive moves and link integrity.** When a project, initiative, or engagement is archived, its path changes (e.g., `gtd/projects/foo/` → `gtd/archive/projects/2026/foo/`). Polymorphic `parent:` links from actions, plus any `[[wikilinks]]` from atlas/intel notes, will break. Resolution:
-1. **Agent-driven moves rewrite links** — when Claude performs the archive move, it scans for inbound references and updates them in the same operation, logging the rewrite as `declaration-changed` (or `object-created` for the archive copy) to `system/events/`.
+1. **Agent-driven moves rewrite links** — when Claude performs the archive move, it scans for inbound references and updates them in the same operation, logging the rewrite as an `object-archived` event to `system/events/`.
 2. **Operator-driven moves (drag in Obsidian) get caught by vault-improvements** — broken-link scan surfaces them as `[REVIEW]` items the next time the signal runs.
 3. **Renames follow the same pattern** — agent rewrites; manual rename → vault-improvements catches.
 
@@ -880,9 +879,9 @@ else:
   proceed with fresh install
 ```
 
-**Bootstrap edge cases (must handle, not refuse):**
-- **Existing `.claude/` from prior gstack/Claude Code use** — bootstrap migrates the existing directory's content into `_workdesk/`, then replaces `.claude/` with a symlink to `_workdesk/`. Skills, rules, settings, and hooks are preserved; declarations get WorkDesk-namespaced. If a conflicting hook already binds the same event, refuse with a clear diff and let the operator resolve manually before retrying.
-- **Existing `.claude/settings.json`** — merge into `_workdesk/settings.json`, don't overwrite. Preserve existing hooks/permissions; append WorkDesk hooks.
+**Greenfield-only is strict in V1.** Existing `.claude/`, `system/log.md`, or any other content outside the empty-vault allow-list causes bootstrap to refuse with the migration message. V1 does **not** auto-migrate prior installs — that's V2's `/migrate` skill. Operators with existing content either start a fresh vault or wait for V2.
+
+**Bootstrap edge cases (environmental, must handle gracefully — not migrations):**
 - **Vault on iCloud Drive** — `_workdesk/` is a real directory so it survives iCloud eviction better than a symlinked target. The `.claude` symlink may still be evicted; bootstrap warns: *"iCloud-backed vault detected; if Claude Code reports missing `.claude/`, run `brctl download _workdesk/` or move the vault out of iCloud."*
 - **Vault on Obsidian Sync** — Obsidian Sync syncs `_workdesk/` (real directory) but skips the `.claude` symlink. On other devices, recreate the symlink with `ln -s _workdesk .claude` from the vault root, or skip if Claude Code isn't installed there.
 - **Permission failures** — `chmod +x` on hook scripts may fail on some filesystems (NFS, FAT). Bootstrap retries once, then errors with explicit recovery steps.
@@ -959,7 +958,7 @@ If self-check fails, install stops in a recoverable state and emits a plain-lang
 - `_workdesk/skills/{obsidian-cli,qmd,defuddle,pobo,daily-ops,extract,obsidian-markdown}/` — already exist, reused
 - `_workdesk/skills/onboard-client/` — adapted into the broader `/onboarding` skill or kept as a sub-flow
 - `_workdesk/agents/orchestrator.md` — kept; routes between skills
-- `system/log.md` (existing 91 lines) — content migrated into `system/events/{YYYY-MM}.md` files at bootstrap; original kept as `system/_archive/log.md.original` for reference
+- `system/log.md` (existing 91 lines in Khalil's current vault) — V1 does **not** migrate this; it lives only in the existing vault and bootstrap refuses to install over it (greenfield-only). V2's `/migrate` skill will translate prior `log.md` entries into `system/events/{YYYY-MM}.md` format when migration ships.
 
 ## Critical Risks And Mitigations
 
@@ -1068,7 +1067,7 @@ End-to-end smoke test on a fresh Mac (or fresh test vault):
 ### 1. Bootstrap test
 - Point bootstrap at empty test vault → installs cleanly + post-install self-check passes
 - Point bootstrap at vault with existing content → refuses gracefully with migration message
-- Point bootstrap at vault with existing `.claude/settings.json` → merges hooks, doesn't overwrite
+- Point bootstrap at vault with existing `.claude/` directory → refuses install (greenfield-only; not a V1 migration target)
 - Verify `_workdesk/` is visible in Obsidian without "Show Hidden Files" plugin
 - Verify `.claude` symlink resolves to `_workdesk/`
 - Verify `personal/` is hard-locked (try to write via Claude Code → blocked by PreToolUse hook)
@@ -1087,13 +1086,14 @@ End-to-end smoke test on a fresh Mac (or fresh test vault):
 - Drop a meeting transcript in `system/transcripts/` → processes into `atlas/meetings/{date}-{slug}.md` + creates/updates `atlas/people/`, `atlas/decisions/` as appropriate
 - Verify source frontmatter on transcript flips `processed: true` with `processed-into:` backlinks
 - Verify `system/events/{YYYY-MM}.md` records `source-processed` + `object-created` lines
-- Verify low-confidence creations drop `[REVIEW]` pointers in `gtd/inbox/` (and confirm 7-per-session cap holds)
+- Verify above-threshold creations (≥0.7 confidence) drop `[REVIEW]` pointers in `gtd/inbox/` (and confirm 7-per-session cap holds)
+- Verify sub-threshold (<0.7) detections stay silent or ask inline — never drop a `[REVIEW]`
 
 ### 4. Signal test — three data conditions
 - **Rich data:** run `/daily-ops` with calendar + transcripts + active areas → produces full daily-plan
 - **Sparse data:** disable connectors, leave only 3 manual notes → daily-plan still produces useful output via fallback chain
 - **Cold start:** empty vault post-bootstrap → daily-plan produces setup-oriented plan, not hollow summary
-- Run `/weekly-review` end of week 1 → produces `intel/briefings/weekly/{date}-week-{n}.md` with proposed closures, promotions, cleanup
+- Run `/weekly-review` end of week 1 → produces `intel/briefings/weekly/{date}-weekly-review.md` with proposed closures, promotions, cleanup
 - Verify vault-improvements is suppressed for first 14 days, fires on day 15
 
 ### 5. GTD lifecycle test
