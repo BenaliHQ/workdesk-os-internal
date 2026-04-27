@@ -4,7 +4,9 @@
 
 This plan crystallizes the five-zone WorkDesk OS architecture so it can be reviewed by Ultra Review / Codex before implementation begins. The vault has lived in a four-zone model (personal, atlas, intel, system) since vault-architecture; testing with Jenny Meier and the Codex POBO review revealed that GTD-style action management was scattered across project notes, meeting notes, and inline checkboxes with no canonical home. Splitting GTD into its own zone resolves the tension and gives each zone a single unit type to manage.
 
-The output of this plan is a working WorkDesk OS bootstrap that any user can install on a fresh machine, scaffold a starter vault, pass through the first-session doctor + onboarding flow, and then use reliably — with Claude proactively extending the vault over time via four meta-skills and a self-improvement loop.
+The output of this plan is a working WorkDesk OS bootstrap that any user can install on a fresh machine, scaffold a starter vault, pass through the first-session doctor + onboarding flow, and then use reliably — with Claude proactively extending the vault over time via six meta-skills and a self-improvement loop.
+
+**Implementation-readiness rule.** Any V1 behavior that depends on Claude Code runtime features must name the exact hook event, state file, and fallback behavior. Anything that cannot be verified by bootstrap or `/workdesk-doctor` is treated as deferred, not assumed.
 
 ## Five-Zone Model
 
@@ -550,7 +552,7 @@ processed-into: ["[[...]]"]    # backlinks to notes produced from this source
 
 **Pre-built source declarations (universal — V1 ships exactly three):**
 - `transcript` — Granola/Google Meet/manual transcripts. Processing rule: session-entry intake scan or `/process-transcripts` proposes extraction → operator confirms → extract meeting → `atlas/meetings/` + decisions → `atlas/decisions/` + people updates. Dropping a file does **not** auto-process it in the background.
-- `session-log` — two-phase Claude session capture. A Stop hook dumps the raw conversation to `system/session-log/{date}-{time}-{slug}-raw.md`; `/extract --summarize {raw-file}` writes the final summary-shaped note and preserves the raw conversation verbatim.
+- `session-log` — two-phase Claude session capture. A `SessionEnd` hook copies/parses Claude Code's `transcript_path` into `system/session-log/{date}-{time}-{session-id}-raw.md`; `/extract --summarize {raw-file}` writes the final summary-shaped note and preserves the raw conversation. A `Stop` hook may maintain an upserted crash-tolerant snapshot, but it must not create a new raw file on every turn.
 - `intake` — generic raw drops. Processing rule: triage to atlas/intel/gtd
 
 **Conditional source declarations (V1.x or later — explicitly NOT in V1):**
@@ -559,20 +561,25 @@ processed-into: ["[[...]]"]    # backlinks to notes produced from this source
 
 **Session-log capture is two-phase in V1.**
 
-**1. Stop-hook raw dump**
+**1. Runtime transcript export**
 
 ```markdown
 ---
 type: source
 source-kind: session-log
 date: 2026-04-26
+session-id: abc123
+transcript-path: "/Users/.../.claude/projects/.../abc123.jsonl"
 processed: false
 summarized: false
+complete: true
 ---
 
 # Conversation
-[Verbatim input/output captured from the Claude Code session transcript.]
+[Conversation reconstructed from the Claude Code transcript JSONL.]
 ```
+
+Claude Code `Stop` runs at the end of each assistant turn, not only at session close. Therefore V1 does **not** treat `Stop` as "write one session log." The primary raw dump runs on `SessionEnd`. If `SessionEnd` is unavailable or unreliable in testing, the fallback is a `Stop` hook that **upserts one file per `session_id`** and marks `complete: false`; the next successful turn updates the same file. `/workdesk-doctor` verifies whichever path V1 ships.
 
 **2. `/extract --summarize` final note**
 
@@ -591,7 +598,7 @@ source: "[[system/session-log/2026-04-26-09-30-workdesk-review-raw]]"
 [Verbatim input/output, every turn, in order. Referenceable for "what did we actually say?"]
 ```
 
-Hooks do **not** summarize. The Stop hook only writes the raw file. On the next session-entry intake scan, any `summarized: false` raw session-log file surfaces a `[REVIEW]` item proposing `/extract --summarize {raw-file}`. `/extract` writes the summary for readability, preserves the verbatim conversation, flips the raw file to `summarized: true`, and records the final note in `processed-into:`.
+Hooks do **not** summarize. The raw-dump hook only exports the transcript-derived raw file. On the next session-entry intake scan, any `summarized: false` raw session-log file surfaces a `[REVIEW]` item proposing `/extract --summarize {raw-file}`. `/extract` writes the summary for readability, preserves the conversation, flips the raw file to `summarized: true`, and records the final note in `processed-into:`.
 
 **Event logging mechanism (hook-driven, semantic events only):**
 
@@ -638,7 +645,7 @@ Write line format: `YYYY-MM-DD HH:MM | event-class | target | result-or-context`
 **Reading is windowed.** Session start reads the current month's file plus the previous month's file (covers any 7-30 day window). Older months stay readable on demand.
 
 **session-log/ vs events/:**
-- `session-log/` = raw Claude dumps plus summarized per-session narratives ("what we discussed and decided this session"). Raw files come from the Stop hook; summaries come from `/extract --summarize`.
+- `session-log/` = raw Claude dumps plus summarized per-session narratives ("what we discussed and decided this session"). Raw files come from `SessionEnd` export or the approved `Stop` upsert fallback; summaries come from `/extract --summarize`.
 - `events/` = per-event semantic stream. Written by hooks; one line per high-value event.
 - A single session typically produces 1 raw file, 0-1 summarized session-log entries, and 5-30 entries across `events/`.
 
@@ -729,7 +736,7 @@ last_updated: 2026-04-26
 5. **`/define-tool`** — Claude capability/integration (CLI, API, MCP)
 6. **`/define-rule`** — behavioral constraint
 
-All six ship pre-built. JTBD-first interview pattern: ask about the work, not the schema. Each meta-skill writes a declaration to `_workdesk/{zone}/` and creates the corresponding folder. When a meta-skill scaffolds a folder-shaped container, it emits canonical `_brief.md` links rather than bare folder links. Detection clauses fire proactive proposals via `[REVIEW]` inbox.
+All six ship pre-built. JTBD-first interview pattern: ask about the work, not the schema. Each meta-skill writes a declaration to the relevant control-plane folder (`_workdesk/objects/`, `_workdesk/signals/`, `_workdesk/sources/`, `_workdesk/practices/`, `_workdesk/tools/`, or `_workdesk/rules/`) and creates the corresponding vault folder when needed. When a meta-skill scaffolds a folder-shaped container, it emits canonical `_brief.md` links rather than bare folder links. Detection clauses fire proactive proposals via `[REVIEW]` inbox.
 
 `/define-skill`, `/define-agent`, `/define-brand` deferred until users explicitly ask. `/define-zone` rejected — five zones is the architecture. Templates and hooks subsumed by other meta-skills or handled at infrastructure level.
 
@@ -789,7 +796,9 @@ Same pattern as the existing `claude-md-coevolution` rule, applied at the declar
 
 A `PostToolUse` hook in `_workdesk/settings.json` fires after `Write`, `Edit`, `MultiEdit`, and `Bash` that touch the vault. Hook script categorizes the operation against the 11 semantic event classes using the table in Zone 5 and appends one line to `system/events/{current-YYYY-MM}.md`. Operations that don't match a semantic class are dropped silently — that's the point of narrowing.
 
-**Concurrency:** parallel tool calls can fire the hook simultaneously. Hook script acquires an advisory lock with `shlock(1)` (BSD-native, no brew dependency) on a sibling `.events.lock` before appending. On lock-acquisition failure, retry up to 3× with 50ms backoff, then drop the entry and emit a stderr warning (operations succeed; only the log entry is lost). Dropped entries are acceptable — the log is observability, not a database.
+**Hook input contract.** Claude Code passes hook input as JSON on stdin. V1 hook scripts parse only the fields they need (`hook_event_name`, `tool_name`, `tool_input`, `cwd`, `session_id`, `transcript_path`) through a bundled `_workdesk/scripts/json-get.sh` wrapper that uses macOS `/usr/bin/plutil` first. `jq` is allowed when present but is **not** a V1 dependency.
+
+**Concurrency:** parallel tool calls can fire the hook simultaneously. Hook script acquires an advisory lock with `shlock(1)` when available (verified by bootstrap), otherwise falls back to atomic `mkdir` locking on a sibling `.events.lock.d/`. On lock-acquisition failure, retry up to 3× with 50ms backoff, then drop the entry and emit a stderr warning (operations succeed; only the log entry is lost). Dropped entries are acceptable — the log is observability, not a database.
 
 **Hook overhead budget:** total hook latency must stay under 50ms p95 to avoid perceptible slowdown in Claude Code. Bootstrap installs a benchmark script at `_workdesk/scripts/bench-hooks.sh` that operator can run anytime to confirm the hook stays within budget.
 
@@ -802,12 +811,24 @@ Signal declarations carry `schedule: daily | weekly | on-demand | triggered`, bu
 | Trigger type | Mechanism |
 |---|---|
 | `on-demand` | Operator runs `/daily-ops`, `/weekly-review`, etc. |
-| `daily` | First Claude Code session after midnight checks signal "last-fired" timestamp; if stale, proposes running it. No background daemon. |
-| `weekly` | Same first-session check; weekly-review is the canonical weekly (vault-improvements suppressed first 14 days, then weekly). |
+| `daily` | `SessionStart` hook reads `_workdesk/state/signals.json`; if `daily-plan.last-fired` is before local midnight, it adds a session-entry notice proposing `/daily-ops`. No background daemon. |
+| `weekly` | Same `SessionStart` check against `weekly-review.last-fired`; vault-improvements remains suppressed for first 14 days, then weekly. |
 | `triggered` | Detection clauses fire inside skills during an active session; they are not file-system watchers. |
-| `session-entry intake scan` | The first top-level skill invoked in a Claude Code session scans `system/transcripts/`, `system/intake/`, and `system/session-log/` for unprocessed or unsummarized files, then proposes `/process-transcripts`, triage, or `/extract --summarize` via `[REVIEW]`. |
+| `session-entry intake scan` | `SessionStart` hook runs `_workdesk/scripts/session-entry-scan.sh`, scanning `system/transcripts/`, `system/intake/`, and `system/session-log/` for unprocessed or unsummarized files. It writes `_workdesk/state/session-entry.md` and adds concise context to the session; core skills read that state before doing work. |
 
 **Trade-off:** signals don't fire if operator never opens Claude Code. This is acceptable for V1 — daily-plan and weekly-review are only useful inside a Claude Code session. A future V1.x cron-based runner ships if this assumption breaks.
+
+**Signal state file.** `_workdesk/state/signals.json` is the only mutable scheduler state:
+
+```json
+{
+  "daily-plan": { "last-fired": null },
+  "weekly-review": { "last-fired": null },
+  "vault-improvements": { "last-fired": null, "suppressed-until": "2026-05-10" }
+}
+```
+
+Signal skills update this file only after successfully writing their output note. If state and output files disagree, `/workdesk-doctor` trusts the output files and repairs state.
 
 ### vault-improvements signal mechanism (the self-improvement loop)
 
@@ -886,7 +907,7 @@ For adding new engagement containers post-onboarding: run `/define-object` direc
 - `/workdesk-update` skill that performs 3-way merge:
   1. V1 default (baseline) — `_workdesk/defaults/{file}`
   2. V2 default (new) — shipped in update
-  3. User's current — `_workdesk/{zone}/{file}`
+  3. User's current — `_workdesk/{artifact-type}/{file}`
 - For each shipped artifact: auto-apply V1→V2 changes that don't conflict; surface conflicts via `[REVIEW]` inbox (*"keep mine / take V2 / merge"*)
 - `/workdesk-update --preview` dry-run mode shows changes without applying
 - Auto-snapshot to `_workdesk/snapshots/{date}-pre-v2/` before any merge
@@ -947,6 +968,8 @@ V1 ships exclusively for macOS. Linux probably works (similar Unix) but isn't of
 
 **Avoid hidden dependency sprawl.** V1 must not depend on Node-based bootstrap tooling, background daemons, OS-level launch agents, or non-standard package managers. Shell + small bash helpers only — every moving part testable and recoverable.
 
+**Runtime dependency contract.** Bootstrap verifies these macOS-provided tools before install: `/bin/bash`, `/usr/bin/plutil`, `/usr/bin/stat`, `/bin/mkdir`, `/bin/ln`, `/bin/chmod`, `/usr/bin/find`, `/usr/bin/sed`, `/usr/bin/awk`, and either `/usr/bin/shlock` or working atomic `mkdir` locks. `jq`, Node.js, Homebrew, Python packages, and launch agents are optional and never required for V1.
+
 ### Migration story — V1 is greenfield only (Gap #10 resolution)
 
 V1 bootstrap **requires an empty vault**. If it detects existing content outside `.obsidian/`, it warns and refuses:
@@ -983,6 +1006,18 @@ else:
 - Executes with full backup snapshots before any change
 - Not in V1.
 
+### User-facing install contract
+
+A fresh user should need only this path:
+
+1. `./bootstrap.sh /path/to/EmptyVault`
+2. `cd /path/to/EmptyVault && claude`
+3. `/workdesk-doctor`
+4. `/onboarding`
+5. `/daily-ops` tomorrow, `/weekly-review` at week end
+
+Bootstrap prints the same sequence after a successful install and also writes it into `gtd/inbox/{date}-welcome.md`. If any step fails, the error message names the failed check, the file involved, and the exact repair command or fallback.
+
 ## Critical Files To Be Created
 
 ### Bootstrap installer
@@ -1004,6 +1039,7 @@ Bootstrap finishes by verifying filesystem-visible facts only:
 - Required hook scripts exist and are executable
 - `.claude` symlink resolves correctly
 - Shell write access works in non-personal zones (scratch file create + cleanup)
+- Runtime dependencies from the dependency contract are present, including JSON extraction through `/usr/bin/plutil`
 
 If filesystem self-check fails, install stops in a recoverable state and emits a plain-language repair note. No silent failures.
 
@@ -1011,6 +1047,8 @@ If filesystem self-check fails, install stops in a recoverable state and emits a
 `/workdesk-doctor` runs inside Claude Code and verifies runtime behavior bootstrap cannot see:
 - `personal/` lock blocks `Write`, `Edit`, `MultiEdit`, and Bash mutation probes such as `mv`, redirection, and `tee`
 - `PostToolUse` hook is reachable from Claude Code's runtime
+- `SessionStart` hook produces session-entry state and stale-signal notices
+- `SessionEnd` raw transcript export works, or the approved `Stop` upsert fallback works without creating duplicate per-turn raw logs
 - Hook latency remains within budget
 - Session-entry intake scan surfaces unprocessed transcripts/intake items and unsummarized raw session-log files
 
@@ -1026,13 +1064,18 @@ Bootstrap is not considered fully complete until `/workdesk-doctor` passes.
 ### `_workdesk/` infrastructure (real directory; `.claude` is a symlink to it)
 - `_workdesk/operator-profile.md` — role mix, contexts, enabled tools, daily-planning style
 - `_workdesk/onboarding-state.md` — tracks per-phase onboarding completion
-- `_workdesk/settings.json` — declares PostToolUse hook for `system/events/`, PreToolUse hook for `personal/` lock, Stop hook for session-log raw dump + learnings
+- `_workdesk/state/signals.json` — last-fired timestamps and suppression state for scheduled signals
+- `_workdesk/state/session-entry.md` — latest session-start scan summary, safe to overwrite
+- `_workdesk/settings.json` — declares SessionStart hook for session-entry scan, PostToolUse hook for `system/events/`, PreToolUse hook for `personal/` lock, SessionEnd raw transcript export, and Stop-hook learnings/snapshot fallback if needed
+- `_workdesk/scripts/json-get.sh` — small JSON field extractor backed by macOS `plutil`; avoids requiring `jq`
+- `_workdesk/scripts/session-entry-scan.sh` — scans unprocessed sources and stale signal state at session start
 - `_workdesk/scripts/post-tool-use-log.sh` — semantic-event hook script (11 classes + categorization table)
 - `_workdesk/scripts/pre-tool-use-personal-lock.sh` — read-only enforcement across `Write`, `Edit`, `MultiEdit`, `NotebookEdit`, and best-effort Bash mutation blocking
-- `_workdesk/scripts/stop-session-dump.sh` — Stop hook that dumps raw Claude session transcripts to `system/session-log/*-raw.md`
+- `_workdesk/scripts/session-end-session-dump.sh` — SessionEnd hook that exports Claude transcript JSONL to `system/session-log/*-raw.md`
+- `_workdesk/scripts/stop-session-snapshot.sh` — optional Stop fallback that upserts one raw file per `session_id`; never creates one file per turn
 - `_workdesk/scripts/bench-hooks.sh` — verifies p95 < 50ms
 - `_workdesk/scripts/bootstrap-vault.sh` — vault-content scaffolding helper
-- `_workdesk/skills/` — V1 core skills:
+- `_workdesk/skills/` — V1 core skills, each packaged as `_workdesk/skills/{name}/SKILL.md` with `name:` and `description:` frontmatter so Claude Code can expose it as `/{name}` and discover it automatically:
   - `/workdesk-doctor`
   - `/onboarding` (six phases + `--status`, `--restart`, `--update-profile`)
   - `/daily-ops` (invokes daily-plan)
@@ -1055,7 +1098,9 @@ Bootstrap is not considered fully complete until `/workdesk-doctor` passes.
 - `_workdesk/snapshots/` — empty, ready for pre-update snapshots
 - `_workdesk/templates/` — format scaffolds for meta-skills
 
-### Existing files to reuse / adapt (paths after bootstrap migration; pre-existing content under `.claude/` moves into `_workdesk/`)
+### Existing implementation assets to reuse / adapt
+This subsection is about implementation asset reuse while building V1, not installer behavior. The shipped bootstrap remains greenfield-only and never migrates a user's existing `.claude/` directory.
+
 - `_workdesk/hooks/stop-learnings.sh` — already exists, reused for `## Learnings` section + skill learnings.md scanning
 - `_workdesk/rules/per-project-accounting.md` — already exists at 8-item structure
 - `_workdesk/skills/{obsidian-cli,qmd,defuddle,pobo,daily-ops,extract,obsidian-markdown}/` — already exist, reused (with `/extract` extended to support `--summarize`)
@@ -1085,7 +1130,7 @@ Stress-testing the plan against six personas (consultant, founder, employee, res
 
 ### Risk 5 — Hook fragility
 **Problem:** all-event logging creates noise, performance drag, and failure points.
-**Mitigation:** narrow to 11 semantic event classes; monthly event files (no rotation hook); explicit categorization table + 5-second de-dup window; `shlock`-based concurrency; 50ms p95 latency budget enforced via bench script.
+**Mitigation:** narrow to 11 semantic event classes; monthly event files (no rotation hook); explicit categorization table + 5-second de-dup window; `shlock` or atomic-`mkdir` concurrency; 50ms p95 latency budget enforced via bench script.
 
 ### Risk 6 — Optional tool lock-in
 **Problem:** users without GWS or transcript tools get a degraded product that feels broken.
@@ -1136,17 +1181,19 @@ The operator can answer without opening implementation docs:
 This order matters. V1 should not ship self-improvement before it ships a stable everyday loop.
 
 1. Bootstrap skeleton + filesystem self-check
-2. Personal lock enforcement (PreToolUse hook)
-3. Event logging + hook plumbing (`system/events/{YYYY-MM}.md`, 11 semantic classes)
-4. `/workdesk-doctor` runtime probes
-5. Session-log raw dump + `/extract --summarize`
-6. Atlas core types **including `areas/`**
-7. GTD core types **including `recurring/`**
-8. Operator profile + 6-phase onboarding
-9. Daily-plan with sparse-data fallback chain
-10. Weekly-review (active from week 1)
-11. Transcript intake scan + `/process-transcripts`
-12. Vault-improvements (suppressed first 14 days)
+2. Claude Code packaging contract (`_workdesk/skills/*/SKILL.md`, `_workdesk/settings.json`, `json-get.sh`)
+3. Personal lock enforcement (PreToolUse hook)
+4. Event logging + hook plumbing (`system/events/{YYYY-MM}.md`, 11 semantic classes)
+5. SessionStart scan + signal state (`_workdesk/state/signals.json`, `_workdesk/state/session-entry.md`)
+6. `/workdesk-doctor` runtime probes
+7. Session-log raw export + `/extract --summarize`
+8. Atlas core types **including `areas/`**
+9. GTD core types **including `recurring/`**
+10. Operator profile + 6-phase onboarding
+11. Daily-plan with sparse-data fallback chain
+12. Weekly-review (active from week 1)
+13. Transcript intake scan + `/process-transcripts`
+14. Vault-improvements (suppressed first 14 days)
 
 ## Open Questions (Deferred Until V1 Telemetry)
 
@@ -1180,12 +1227,15 @@ End-to-end smoke test on a fresh Mac (or fresh test vault):
 - Verify `.claude` symlink resolves to `_workdesk/`
 - Verify `_workdesk/settings.json` is valid JSON and required hook scripts are executable
 - Verify shell write access works in `system/intake/` and cleanup succeeds
+- Verify hook scripts can parse sample Claude Code hook JSON via `_workdesk/scripts/json-get.sh` without `jq`
 
 ### 2. Doctor test
 - First Claude Code session → run `/workdesk-doctor` before onboarding
 - Verify `personal/` is hard-locked for `Write`, `Edit`, and `MultiEdit`
 - Verify Bash mutation probes such as `mv personal/test.md /tmp/`, `tee personal/test.md`, and `echo hi >> personal/test.md` are blocked
 - Verify PostToolUse hook is reachable from Claude Code runtime
+- Verify SessionStart creates `_workdesk/state/session-entry.md` and reports due daily/weekly signals from `_workdesk/state/signals.json`
+- Verify SessionEnd writes one raw session-log file per Claude session; if fallback mode is enabled, verify Stop upserts one file per `session_id` instead of one file per turn
 - Verify hook latency under 50ms p95 via `_workdesk/scripts/bench-hooks.sh`
 - Verify session-entry intake scan can see an unprocessed transcript and an unsummarized raw session-log file
 
@@ -1209,6 +1259,7 @@ End-to-end smoke test on a fresh Mac (or fresh test vault):
 - **Rich data:** run `/daily-ops` with calendar + transcripts + active areas → produces full daily-plan
 - **Sparse data:** disable connectors, leave only 3 manual notes → daily-plan still produces useful output via fallback chain
 - **Cold start:** empty vault post-bootstrap → daily-plan produces setup-oriented plan, not hollow summary
+- Verify `/daily-ops` updates `_workdesk/state/signals.json` only after the daily-plan file is written
 - Run `/weekly-review` end of week 1 → produces `intel/briefings/weekly/{date}-weekly-review.md` with proposed closures, promotions, cleanup
 - Verify vault-improvements is suppressed for first 14 days, fires on day 15
 
