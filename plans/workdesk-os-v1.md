@@ -4,7 +4,7 @@
 
 This plan crystallizes the five-zone WorkDesk OS architecture so it can be reviewed by Ultra Review / Codex before implementation begins. The vault has lived in a four-zone model (personal, atlas, intel, system) since vault-architecture; testing with Jenny Meier and the Codex POBO review revealed that GTD-style action management was scattered across project notes, meeting notes, and inline checkboxes with no canonical home. Splitting GTD into its own zone resolves the tension and gives each zone a single unit type to manage.
 
-The output of this plan is a working WorkDesk OS bootstrap that any user can install on a fresh machine, scaffold a starter vault, and use immediately — with Claude proactively extending the vault over time via four meta-skills and a self-improvement loop.
+The output of this plan is a working WorkDesk OS bootstrap that any user can install on a fresh machine, scaffold a starter vault, pass through the first-session doctor + onboarding flow, and then use reliably — with Claude proactively extending the vault over time via four meta-skills and a self-improvement loop.
 
 ## Five-Zone Model
 
@@ -60,7 +60,7 @@ personal/
   {user-defined}/    # added over time via /define-practice
 ```
 
-**Hard-locked read-only.** A `PreToolUse` hook in `_workdesk/settings.json` blocks Write, Edit, and NotebookEdit operations whose path resolves under `personal/`. Enforcement is at the harness level — not just instruction. Reads (Read, Glob, Grep) are allowed.
+**Hard-locked read-only.** A `PreToolUse` hook in `_workdesk/settings.json` blocks `Write`, `Edit`, `MultiEdit`, `NotebookEdit`, and `Bash` operations whose path resolves under `personal/`. For Bash, V1 allows only read-oriented command shapes against `personal/` (`cat`, `grep`, `rg`, `head`, `tail`, `wc`, `find`, `ls`) and blocks obvious mutation shapes (`mv`, `cp`, `rm`, `tee`, `touch`, `mkdir`, `sed -i`, shell redirection with `>` / `>>`, heredoc writes) that target `personal/`. Enforcement is at the harness level — not just instruction — but it is **best-effort safety**, not a security boundary; obfuscated shell commands may still evade it. Reads (`Read`, `Glob`, `Grep`, and read-only Bash) are allowed.
 
 **Practice declaration** at `_workdesk/practices/{name}.md`: identity, cadence, template, read policy, detection clause.
 
@@ -113,6 +113,15 @@ atlas/areas/{slug}/
   _archive/       # retired material
 ```
 
+Area metadata lives in `atlas/areas/{slug}/_brief.md` frontmatter and extends the universal baseline with:
+
+```yaml
+expected-cadence: weekly
+last-touched: 2026-04-26
+```
+
+`expected-cadence: none` disables stale-context checks. Areas default to `weekly`. Agent-driven writes anywhere inside `atlas/areas/{slug}/` update `last-touched`; operator-driven edits are picked up lazily on the next scan if the folder changed outside the event stream.
+
 Areas are not initiatives. Initiatives have a bounded outcome and end; areas are permanent until retired. Recurring maintenance work for an area lives in `gtd/recurring/`, not as initiatives.
 
 **Engagement containers — optional, surfaced in onboarding.** Onboarding's role-map phase asks *"What kinds of named, ongoing, relationship-shaped contexts do you work in?"* Operator picks zero or more. **A user can be consultant + founder + parent concurrently** (see `_workdesk/operator-profile.md`); engagement containers and `areas/` coexist freely.
@@ -153,7 +162,9 @@ atlas/{engagement-type}/{slug}/
   _archive/       # retired material
 ```
 
-NO nested `projects/` subfolder. Engagement-tied work lives flat in `atlas/initiatives/` linked back via `engagement: "[[atlas/{engagement-type}/{slug}]]"` frontmatter. Engagement `_status.md` references its active initiatives.
+NO nested `projects/` subfolder. Engagement-tied work lives flat in `atlas/initiatives/` linked back via `engagement: "[[atlas/{engagement-type}/{slug}/_brief]]"` frontmatter. Engagement `_status.md` references its active initiatives.
+
+**Canonical address for container objects.** Obsidian wikilinks resolve to files, not folders. In V1, every folder-shaped container is addressed by its `_brief.md` file: `[[atlas/areas/household/_brief]]`, `[[atlas/clients/dudley/_brief]]`, `[[atlas/initiatives/dudley-msa-review/_brief]]`, `[[gtd/projects/workdesk-os/_brief]]`. `/define-object`, `/pobo`, archive rewrites, broken-link scans, `parent:`, `engagement:`, `area:`, and `_workdesk/operator-profile.md` all use this convention. Never target a bare folder path in a wikilink.
 
 **Initiatives — 8-item structure (same as projects):**
 
@@ -162,12 +173,20 @@ atlas/initiatives/{slug}/
   _brief.md, _status.md, plan.md, notes/, reference/, specs/, deliverables/, _archive/
 ```
 
-Frontmatter: `engagement: "[[atlas/clients/dudley]]"` or `engagement: "[[atlas/businesses/benali]]"`.
+Initiative metadata lives in `atlas/initiatives/{slug}/_brief.md` frontmatter and typically includes:
+
+```yaml
+engagement: "[[atlas/clients/dudley/_brief]]"   # or area: "[[atlas/areas/household/_brief]]"
+expected-cadence: weekly
+last-touched: 2026-04-26
+```
+
+Initiatives default to `expected-cadence: weekly`.
 
 **Object declaration** at `_workdesk/objects/{type}.md` carries:
 - **Identity** — name, folder location, single-note vs folder, file-naming pattern
 - **Format** (not template) — frontmatter fields + body sections Claude follows
-- **Source** — required field on every instance; accepts wikilinks to logged sessions OR processed materials
+- **Source** — required primary/initial source on every instance; accepts wikilinks to logged sessions OR processed materials. Claim-level additions beyond the primary source use inline body citations (see below).
 - **Detection** — when Claude proposes creating a new instance during processing
 - **Matching** — what else updates when this changes (per the matching rule)
 - **Lifecycle** — status values, transitions, archive rules
@@ -178,7 +197,7 @@ Frontmatter: `engagement: "[[atlas/clients/dudley]]"` or `engagement: "[[atlas/b
 ---
 type: <object-type>
 status: active | archived | <type-specific>
-source: "[[...]]"           # required — points to logged session or processed material
+source: "[[...]]"           # required primary/initial source — points to logged session or processed material
 created: 2026-04-26
 last_updated: 2026-04-26
 author: claude | operator
@@ -186,6 +205,17 @@ author: claude | operator
 ```
 
 Every `/define-object` declaration extends this with type-specific fields.
+
+**Claim-level provenance convention.** `source:` in frontmatter records the primary/initial source that created the note. When a note accumulates facts from later sources, the body uses inline footnotes for claim-level attribution:
+
+```markdown
+Dudley first joined the pilot in February.[^1] Scope expanded to MSA review in April.[^2]
+
+[^1]: [[atlas/decisions/2026-02-03-dudley-pilot]]
+[^2]: [[atlas/meetings/2026-04-23-dudley-weekly]]
+```
+
+If a note still represents a single source-cluster, frontmatter `source:` alone is sufficient. `/define-object` scaffolds this convention into each object's `Format` section. `vault-improvements` can flag long-lived atlas notes whose `last_updated` changed across multiple sessions but whose body still lacks secondary citations beyond the primary `source:`.
 
 **Detection → GTD inbox.** When Claude proposes creating a new object during processing, it drops a `[REVIEW]` pointer into `gtd/inbox/`. Operator confirms before scaffolding fires.
 
@@ -241,7 +271,7 @@ gtd/
 type: action
 status: next                                          # next | waiting | someday | done
 context: [work, calls, errands]
-parent: "[[atlas/initiatives/dudley-msa-review]]"     # polymorphic — points to whatever owns this action: gtd project, atlas initiative, engagement, or empty
+parent: "[[atlas/initiatives/dudley-msa-review/_brief]]" # polymorphic — points to whatever owns this action: gtd project, atlas initiative, engagement, or empty
 waiting-on: "[[atlas/people/...]]"                    # only if status: waiting
 source: "[[atlas/meetings/2026-04-22-dudley-weekly]]" # logged session OR processed material
 created: 2026-04-26
@@ -250,10 +280,10 @@ What needs to happen and why.
 ```
 
 **`parent:` is polymorphic.** One field, points to whatever owns the action. Claude dereferences the link to figure out the parent's type. Allowed parents:
-- `parent: "[[gtd/projects/workdesk-os]]"` — owned by a personal-focus project
-- `parent: "[[atlas/initiatives/dudley-msa-review]]"` — owned by an engagement-tied initiative
-- `parent: "[[atlas/areas/household]]"` — tied to a standing area of responsibility
-- `parent: "[[atlas/clients/dudley]]"` — tied directly to an engagement, no project/initiative wrapping
+- `parent: "[[gtd/projects/workdesk-os/_brief]]"` — owned by a personal-focus project
+- `parent: "[[atlas/initiatives/dudley-msa-review/_brief]]"` — owned by an engagement-tied initiative
+- `parent: "[[atlas/areas/household/_brief]]"` — tied to a standing area of responsibility
+- `parent: "[[atlas/clients/dudley/_brief]]"` — tied directly to an engagement, no project/initiative wrapping
 - `parent: "[[gtd/recurring/schedules/weekly-payroll]]"` — promoted from a due recurring item
 - `parent: ""` — standalone
 
@@ -274,6 +304,17 @@ _archive/       # retired material inside the project
 
 (9th item `repo/` for code projects.)
 
+Project metadata lives in `gtd/projects/{slug}/_brief.md` frontmatter and extends the universal baseline with:
+
+```yaml
+expected-cadence: biweekly
+last-touched: 2026-04-26
+```
+
+Projects default to `expected-cadence: biweekly`. `expected-cadence: none` disables stale-context checks.
+
+**Cadence-backed staleness rule.** `atlas/areas/`, `atlas/initiatives/`, and `gtd/projects/` all carry `expected-cadence:` and `last-touched:` in their `_brief.md` frontmatter. Defaults: areas `weekly`, initiatives `weekly`, projects `biweekly`. `none` disables stale alerts. `daily-plan`, `weekly-review`, and `vault-improvements` flag a context as stale when `today - last-touched > 1.5 × expected-cadence`. Updating `last-touched` is an implicit side effect of agent-driven writes inside the container; it does **not** emit its own event class.
+
 **Recurring format — two shapes:**
 
 Schedules (cadence-bound):
@@ -285,7 +326,7 @@ shape: schedule
 status: active                                          # active | paused | retired
 cadence: weekly                                         # daily | weekly | monthly | quarterly | yearly | custom
 next_due: 2026-05-01
-parent: "[[atlas/areas/household]]"                     # area, engagement, project, or empty
+parent: "[[atlas/areas/household/_brief]]"              # area, engagement, project, or empty
 source: ""
 created: 2026-04-26
 ---
@@ -299,7 +340,7 @@ Checklists (repeatable procedures, not cadence-bound):
 type: recurring
 shape: checklist
 status: active
-parent: "[[atlas/areas/publishing]]"
+parent: "[[atlas/areas/publishing/_brief]]"
 source: ""
 created: 2026-04-26
 ---
@@ -406,12 +447,12 @@ schedule: daily | weekly | on-demand | triggered
 **Pre-built signals shipped with bootstrap (three only):**
 
 **1. `daily-plan`** (`_workdesk/signals/daily-plan.md`)
-- Sources: today's calendar, unread email, today's daily note, yesterday's meeting transcripts, recent events, active gtd/projects/ statuses, active atlas/initiatives/ statuses, due recurring items
+- Sources: today's calendar, unread email, today's daily note, session-entry intake scan results (unprocessed transcripts, intake items, raw session-log files), recent events, active gtd/projects/ statuses, active atlas/initiatives/ statuses, due recurring items
 - Schedule: daily (first-session-after-midnight trigger or on-demand via `/daily-ops`)
 - Output: `intel/briefings/daily/{date}-daily-plan.md`
 
 **2. `weekly-review`** (`_workdesk/signals/weekly-review.md`) — **mandatory in V1**
-- Sources: open actions, projects, initiatives, areas, recurring items due in next 7 days, inbox backlog, stale contexts (not touched > area-typical cadence), processed transcripts, last week's daily notes
+- Sources: open actions, projects, initiatives, areas, recurring items due in next 7 days, inbox backlog, stale contexts (`today - last-touched > 1.5 × expected-cadence`), processed transcripts, last week's daily notes
 - Schedule: weekly (first session of the week or on-demand via `/weekly-review`)
 - Output: `intel/briefings/weekly/{date}-weekly-review.md` + `[REVIEW]` inbox pointers for proposed closures, promotions, and cleanup
 - The bridge between onboarding and stable use. Active from week 1. More important for early retention than vault-improvements.
@@ -431,7 +472,7 @@ schedule: daily | weekly | on-demand | triggered
 4. Active project and initiative `_status.md` summaries
 5. Today's daily note (if exists)
 6. Unread inbox items (with backlog warning if > 20)
-7. Stale contexts needing attention (areas/initiatives untouched relative to typical cadence)
+7. Stale contexts needing attention (areas/initiatives/projects whose `last-touched` exceeds `expected-cadence`)
 
 If layers 1–7 all return empty (true cold-start), daily-plan produces a **setup-oriented plan**: *"Nothing scheduled and nothing in next-actions. First steps to seed the vault: …"* — not a hollow report.
 
@@ -465,8 +506,9 @@ Archived signals stay in the vault, fully readable, just out of the active scan 
 system/
   intake/              # generic raw drops awaiting triage (replaces both inbox/ and _processing/)
   transcripts/         # raw meeting transcripts before processing
-  session-log/         # per-session narratives, written by /extract
-    2026-04-26-{slug}.md
+  session-log/         # raw Claude dumps + summarized session narratives
+    2026-04-26-09-30-workdesk-review-raw.md
+    2026-04-26-workdesk-review.md
   events/              # append-only monthly event files (replaces single rolling event-log.md)
     2026-04.md
     2026-05.md
@@ -507,21 +549,39 @@ processed-into: ["[[...]]"]    # backlinks to notes produced from this source
 - **Retention** — keep forever, archive after N days, delete after N days
 
 **Pre-built source declarations (universal — V1 ships exactly three):**
-- `transcript` — Granola/Google Meet/manual transcripts. Processing rule: extract meeting → `atlas/meetings/` + decisions → `atlas/decisions/` + people updates
-- `session-log` — claude-log entries. Written by `/extract` at session end. Format: summary section (wikilink-able) + full conversation appended verbatim
+- `transcript` — Granola/Google Meet/manual transcripts. Processing rule: session-entry intake scan or `/process-transcripts` proposes extraction → operator confirms → extract meeting → `atlas/meetings/` + decisions → `atlas/decisions/` + people updates. Dropping a file does **not** auto-process it in the background.
+- `session-log` — two-phase Claude session capture. A Stop hook dumps the raw conversation to `system/session-log/{date}-{time}-{slug}-raw.md`; `/extract --summarize {raw-file}` writes the final summary-shaped note and preserves the raw conversation verbatim.
 - `intake` — generic raw drops. Processing rule: triage to atlas/intel/gtd
 
 **Conditional source declarations (V1.x or later — explicitly NOT in V1):**
 - `bookmark` — only if user installs Defuddle/Keep.md (proposed by vault-improvements when first article URL appears in intake/)
 - `email-export`, `screenshot`, `pdf`, `ocr-scan` — deferred. Narrow source scope avoids brittle integrations during V1 launch.
 
-**Session-log shape** — narrative + full conversation in one file:
+**Session-log capture is two-phase in V1.**
+
+**1. Stop-hook raw dump**
+
+```markdown
+---
+type: source
+source-kind: session-log
+date: 2026-04-26
+processed: false
+summarized: false
+---
+
+# Conversation
+[Verbatim input/output captured from the Claude Code session transcript.]
+```
+
+**2. `/extract --summarize` final note**
 
 ```markdown
 ---
 type: session-log
 date: 2026-04-26
 duration: ~90 min
+source: "[[system/session-log/2026-04-26-09-30-workdesk-review-raw]]"
 ---
 
 # Summary
@@ -531,16 +591,16 @@ duration: ~90 min
 [Verbatim input/output, every turn, in order. Referenceable for "what did we actually say?"]
 ```
 
-`/extract` writes the summary manually for readability. The full conversation is appended automatically (captured during the session).
+Hooks do **not** summarize. The Stop hook only writes the raw file. On the next session-entry intake scan, any `summarized: false` raw session-log file surfaces a `[REVIEW]` item proposing `/extract --summarize {raw-file}`. `/extract` writes the summary for readability, preserves the verbatim conversation, flips the raw file to `summarized: true`, and records the final note in `processed-into:`.
 
 **Event logging mechanism (hook-driven, semantic events only):**
 
-A `PostToolUse` hook in `_workdesk/settings.json` fires after Write/Edit/Bash, but it does **not** log every operation. The hook categorizes and only logs **high-value semantic events** to keep the log signal-rich. V1 logs exactly these event classes:
+A `PostToolUse` hook in `_workdesk/settings.json` fires after `Write`, `Edit`, `MultiEdit`, and `Bash`, but it does **not** log every operation. The hook categorizes and only logs **high-value semantic events** to keep the log signal-rich. V1 logs exactly these 11 event classes:
 
 1. `bootstrap-install-completed`
 2. `onboarding-phase-completed`
 3. `source-processed` (transcript / intake → atlas-or-gtd notes)
-4. `object-created` (atlas object: meeting, decision, person, area, initiative, engagement instance)
+4. `object-created` (atlas object: meeting, decision, person, area, engagement instance, or other non-initiative atlas object)
 5. `project-created`
 6. `initiative-created`
 7. `action-promoted` (recurring → next, or project-plan → next)
@@ -549,16 +609,38 @@ A `PostToolUse` hook in `_workdesk/settings.json` fires after Write/Edit/Bash, b
 10. `declaration-changed` (object/signal/source/practice/tool/rule edited)
 11. `object-archived` (project, initiative, engagement, or area moved to archive; inbound-link rewrites recorded in the same event)
 
-The parenthetical scopes in classes 4 and 9 are illustrative, not exhaustive. Any atlas object type declared via `/define-object` produces `object-created` events; any signal type declared via `/define-signal` produces `signal-generated` events. The hook categorizes by zone-appropriate write, not by the named subtype.
+The parenthetical scopes in classes 4 and 9 are illustrative, not exhaustive. Any atlas object type declared via `/define-object` produces `object-created` events unless it matches the more specific `initiative-created` class. Any signal type declared via `/define-signal` produces `signal-generated` events. The hook categorizes by path pattern and operation shape, not by the named subtype alone.
+
+**Categorization rules (per tool call):**
+
+| Tool + pattern | Event class |
+|---|---|
+| `Write` to `atlas/{atomic-type}/{slug}.md` (new file) or `Write` to `atlas/{container-type}/{slug}/_brief.md` (new file, excluding `atlas/initiatives/`) | `object-created` |
+| `Write` to `gtd/projects/{slug}/_brief.md` (new file) | `project-created` |
+| `Write` to `atlas/initiatives/{slug}/_brief.md` (new file) | `initiative-created` |
+| `Write` to `gtd/actions/next/{slug}.md` as a promotion from plan or recurring | `action-promoted` |
+| `Bash mv` or equivalent file move from `gtd/actions/{next,waiting}/` to `gtd/archive/actions/`, or recurring `next_due` roll-forward paired with action completion | `action-completed` |
+| `Write` to `intel/briefings/`, `intel/vault-improvements/`, or other signal output folder (new file) | `signal-generated` |
+| `Write` / `Edit` / `MultiEdit` to `_workdesk/{objects,signals,sources,practices,rules,templates,skills}/` declarations | `declaration-changed` |
+| `Bash mv` from `gtd/projects/*` to `gtd/archive/projects/*`, or from any container folder into its `_archive/` counterpart, with link rewrites if agent-driven | `object-archived` |
+| `Edit` to `_workdesk/onboarding-state.md` flipping a phase to `complete` | `onboarding-phase-completed` |
+| `Edit` to `system/transcripts/*` or `system/intake/*` flipping `processed: false` → `true` | `source-processed` |
+| `bootstrap.sh` completion marker written to the current month's events file | `bootstrap-install-completed` |
+
+**Multi-file operations.** A logical operation may span several tool calls (for example: move a project folder, then rewrite inbound links). The **first** matching tool call emits the event. Follow-up tool calls within 5 seconds keyed on `(event-class, primary-target)` are de-duplicated.
+
+**Partial failures.** `system/events/` is append-only and does not retract events. If a first matching tool call logs an event and a follow-up rewrite fails, the event stays and `result-or-context` records partial failure when known. Consumers tolerate occasional orphan events; operator repair is acceptable in V1.
+
+**No catch-all update class.** Edits that do not match a row above are dropped silently. This is intentional; `object-updated` style noise would defeat the narrowing.
 
 Write line format: `YYYY-MM-DD HH:MM | event-class | target | result-or-context`. Append-only into the current month's file: `system/events/{YYYY-MM}.md`. No rotation hook needed — month rollover happens because the path includes the month.
 
 **Reading is windowed.** Session start reads the current month's file plus the previous month's file (covers any 7-30 day window). Older months stay readable on demand.
 
 **session-log/ vs events/:**
-- `session-log/` = per-session narrative ("what we discussed and decided this session"). Written by `/extract`.
+- `session-log/` = raw Claude dumps plus summarized per-session narratives ("what we discussed and decided this session"). Raw files come from the Stop hook; summaries come from `/extract --summarize`.
 - `events/` = per-event semantic stream. Written by hooks; one line per high-value event.
-- A single session typically produces 1 entry in `session-log/` and 5-30 entries across `events/`.
+- A single session typically produces 1 raw file, 0-1 summarized session-log entries, and 5-30 entries across `events/`.
 
 **Reference / scripts / templates live in `_workdesk/`:**
 
@@ -606,11 +688,11 @@ role-mix:
   - parent
 primary-contexts:
   engagements:         # active engagement-container instances
-    - "[[atlas/clients/dudley]]"
-    - "[[atlas/businesses/benali]]"
+    - "[[atlas/clients/dudley/_brief]]"
+    - "[[atlas/businesses/benali/_brief]]"
   areas:               # active area instances
-    - "[[atlas/areas/family]]"
-    - "[[atlas/areas/health]]"
+    - "[[atlas/areas/family/_brief]]"
+    - "[[atlas/areas/health/_brief]]"
 enabled-tools:         # detected during onboarding; influences signal sources
   - granola
   - gws-calendar
@@ -647,7 +729,7 @@ last_updated: 2026-04-26
 5. **`/define-tool`** — Claude capability/integration (CLI, API, MCP)
 6. **`/define-rule`** — behavioral constraint
 
-All six ship pre-built. JTBD-first interview pattern: ask about the work, not the schema. Each meta-skill writes a declaration to `_workdesk/{zone}/` and creates the corresponding folder. Detection clauses fire proactive proposals via `[REVIEW]` inbox.
+All six ship pre-built. JTBD-first interview pattern: ask about the work, not the schema. Each meta-skill writes a declaration to `_workdesk/{zone}/` and creates the corresponding folder. When a meta-skill scaffolds a folder-shaped container, it emits canonical `_brief.md` links rather than bare folder links. Detection clauses fire proactive proposals via `[REVIEW]` inbox.
 
 `/define-skill`, `/define-agent`, `/define-brand` deferred until users explicitly ask. `/define-zone` rejected — five zones is the architecture. Templates and hooks subsumed by other meta-skills or handled at infrastructure level.
 
@@ -675,7 +757,7 @@ anchors:
 traversal:
   - For each person on today's calendar: fetch their note + last meeting (no time cap)
   - For each project/initiative referenced today: fetch _status + recent meetings tied to it
-  - Surface stale work: projects/initiatives untouched relative to typical cadence
+  - Surface stale work: projects/initiatives whose `last-touched` exceeds `expected-cadence`
 
 output-format: |
   1. Today's commitments + relevant context for each
@@ -705,7 +787,7 @@ Same pattern as the existing `claude-md-coevolution` rule, applied at the declar
 
 ### PostToolUse hook for system/events/
 
-A `PostToolUse` hook in `_workdesk/settings.json` fires after Write/Edit/Bash that touches the vault. Hook script categorizes the operation against the 10 semantic event classes (see Zone 5 system events spec) and appends one line to `system/events/{current-YYYY-MM}.md`. Operations that don't match a semantic class are dropped silently — that's the point of narrowing.
+A `PostToolUse` hook in `_workdesk/settings.json` fires after `Write`, `Edit`, `MultiEdit`, and `Bash` that touch the vault. Hook script categorizes the operation against the 11 semantic event classes using the table in Zone 5 and appends one line to `system/events/{current-YYYY-MM}.md`. Operations that don't match a semantic class are dropped silently — that's the point of narrowing.
 
 **Concurrency:** parallel tool calls can fire the hook simultaneously. Hook script acquires an advisory lock with `shlock(1)` (BSD-native, no brew dependency) on a sibling `.events.lock` before appending. On lock-acquisition failure, retry up to 3× with 50ms backoff, then drop the entry and emit a stderr warning (operations succeed; only the log entry is lost). Dropped entries are acceptable — the log is observability, not a database.
 
@@ -715,14 +797,15 @@ A `PostToolUse` hook in `_workdesk/settings.json` fires after Write/Edit/Bash th
 
 ### Signal scheduling — how daily/weekly cadence actually fires
 
-Signal declarations carry `schedule: daily | weekly | on-demand | triggered`, but Claude Code itself doesn't have a scheduler. V1 mechanisms by cadence:
+Signal declarations carry `schedule: daily | weekly | on-demand | triggered`, but Claude Code itself doesn't have a scheduler. V1 mechanisms by trigger type:
 
-| Cadence | Mechanism |
+| Trigger type | Mechanism |
 |---|---|
 | `on-demand` | Operator runs `/daily-ops`, `/weekly-review`, etc. |
 | `daily` | First Claude Code session after midnight checks signal "last-fired" timestamp; if stale, proposes running it. No background daemon. |
 | `weekly` | Same first-session check; weekly-review is the canonical weekly (vault-improvements suppressed first 14 days, then weekly). |
-| `triggered` | Detection clauses fire inside meta-skills (e.g., new transcript in `system/transcripts/` triggers processing). |
+| `triggered` | Detection clauses fire inside skills during an active session; they are not file-system watchers. |
+| `session-entry intake scan` | The first top-level skill invoked in a Claude Code session scans `system/transcripts/`, `system/intake/`, and `system/session-log/` for unprocessed or unsummarized files, then proposes `/process-transcripts`, triage, or `/extract --summarize` via `[REVIEW]`. |
 
 **Trade-off:** signals don't fire if operator never opens Claude Code. This is acceptable for V1 — daily-plan and weekly-review are only useful inside a Claude Code session. A future V1.x cron-based runner ships if this assumption breaks.
 
@@ -742,7 +825,7 @@ Weekly signal — **suppressed for first 14 days** so weekly-review stabilizes f
 
 Outputs `[REVIEW]` inbox pointers for each holistic recommendation. Operator confirms or dismisses. Vault evolves over time.
 
-**Archive moves and link integrity.** When a project, initiative, or engagement is archived, its path changes (e.g., `gtd/projects/foo/` → `gtd/archive/projects/2026/foo/`). Polymorphic `parent:` links from actions, plus any `[[wikilinks]]` from atlas/intel notes, will break. Resolution:
+**Archive moves and link integrity.** When a project, initiative, or engagement is archived, its path changes (e.g., `gtd/projects/foo/` → `gtd/archive/projects/2026/foo/`). Polymorphic `parent:` links targeting canonical `_brief.md` addresses, plus any `[[wikilinks]]` from atlas/intel notes, will break if they are not rewritten. Resolution:
 1. **Agent-driven moves rewrite links** — when Claude performs the archive move, it scans for inbound references and updates them in the same operation, logging the rewrite as an `object-archived` event to `system/events/`.
 2. **Operator-driven moves (drag in Obsidian) get caught by vault-improvements** — broken-link scan surfaces them as `[REVIEW]` items the next time the signal runs.
 3. **Renames follow the same pattern** — agent rewrites; manual rename → vault-improvements catches.
@@ -753,7 +836,7 @@ V1 onboarding stands on its own. Training videos (when available) explain the co
 
 **Six phases:**
 
-1. **Environment check** — verify install health, confirm `_workdesk/` resolves, confirm `personal/` lock is active, report what's already in place. Read-only — no questions yet.
+1. **Environment check** — read the last `/workdesk-doctor` result. If doctor has not passed, pause onboarding and instruct operator to run it first. Confirm `_workdesk/` resolves and report what's already in place. Read-only — no questions yet.
 2. **Role map** — capture mixed-persona profile. *"Which of these describe how you spend your time? (pick one or more)"* — produces `_workdesk/operator-profile.md` with `role-mix`. No JBTD interview yet; just the role list.
 3. **Context setup** — based on role mix: create `atlas/areas/` instances first (always), then optional engagement containers. *"You picked consultant + parent. Want to scaffold `atlas/clients/` and `atlas/areas/family`, `atlas/areas/household` now?"* Operator confirms or skips per item.
 4. **Tool setup** — detect optional connectors (Granola, GWS, qmd, Defuddle). For each: present, run a smoke test, record result in `enabled-tools`. **Missing tools never block** — they just degrade the signals that depend on them.
@@ -817,9 +900,17 @@ For adding new engagement containers post-onboarding: run `/define-object` direc
 
 3-way merge is the established pattern (git, npm, package managers). Snapshots provide rollback. Dry-run prevents surprises.
 
-### Maturity model — bootstrap → guided 14 days → steady state
+### Maturity model — bootstrap → doctor → onboarding → guided 14 days → steady state
 
-**Stage 0: Bootstrap.** Desired user outcome: *"The vault is installed and safe."* Bootstrap delivers folder structure, declarations, daily note template, welcome inbox item, `operator-profile.md` stub. Does not try to teach the system. Bootstrap → onboarding bridge: a `[REVIEW]` welcome pointer in `gtd/inbox/` says *"Run `/onboarding` to set up your role mix and contexts. Optional: setup videos at [link]."*
+**Stage 0: Bootstrap.** Desired user outcome: *"The vault files are installed cleanly; runtime health is one doctor check away."* Bootstrap delivers folder structure, declarations, daily note template, welcome inbox item, `operator-profile.md` stub. Does not try to teach the system. Bootstrap is **filesystem-only**; it does not prove Claude runtime behavior. Bootstrap → onboarding bridge: a `[REVIEW]` welcome pointer in `gtd/inbox/` says *"Run `/workdesk-doctor`, then `/onboarding` to set up your role mix and contexts. Optional: setup videos at [link]."*
+
+**Stage 0.5: `/workdesk-doctor`.** Desired user outcome: *"Claude runtime checks passed; onboarding can begin."* `/workdesk-doctor` runs in the first Claude Code session and verifies:
+- `personal/` lock blocks `Write`, `Edit`, `MultiEdit`, and obvious Bash mutation probes
+- `PostToolUse` hook is reachable
+- hook latency stays within budget
+- session-entry intake scan can see unprocessed sources
+
+If doctor fails, onboarding pauses until operator reruns it after repair.
 
 **Stage 1: Onboarding.** Desired user outcome: *"The vault reflects my life enough to use tomorrow."* Six phases above. Captures minimum viable operator model. Self-sufficient — videos optional.
 
@@ -839,7 +930,7 @@ Key shape: **weekly-review on, self-improvement off**. Stable everyday loop ship
 
 When all three trigger, `operator-profile.md` flips `first-30-days-mode: graduated`. Tutorial framing drops; vault-improvements activates; daily-plan tonality matures.
 
-User flow: install → `/onboarding` → daily use + weekly-review → steady-state graduation. Videos enrich but don't gate.
+User flow: install → `/workdesk-doctor` → `/onboarding` → daily use + weekly-review → steady-state graduation. Videos enrich but don't gate.
 
 ### Platform scope — Mac-only V1 (Gap #6 resolution)
 
@@ -904,17 +995,26 @@ else:
   6. Create `.claude` symlink → `_workdesk/` (compatibility alias)
   7. Seed welcome `[REVIEW]` in `gtd/inbox/`
   8. Write `bootstrap-install-completed` event to `system/events/{YYYY-MM}.md`
-  9. Run post-install self-check
+  9. Run filesystem self-check
 
-### Post-install self-check
-Bootstrap finishes by verifying:
+### Filesystem self-check
+Bootstrap finishes by verifying filesystem-visible facts only:
 - All required directories exist
-- `personal/` read-only protection is active (test write fails)
-- Hooks are reachable and within latency budget
+- `_workdesk/settings.json` is valid JSON
+- Required hook scripts exist and are executable
 - `.claude` symlink resolves correctly
-- Write access works in non-personal zones
+- Shell write access works in non-personal zones (scratch file create + cleanup)
 
-If self-check fails, install stops in a recoverable state and emits a plain-language repair note. No silent failures.
+If filesystem self-check fails, install stops in a recoverable state and emits a plain-language repair note. No silent failures.
+
+### `/workdesk-doctor` runtime validation
+`/workdesk-doctor` runs inside Claude Code and verifies runtime behavior bootstrap cannot see:
+- `personal/` lock blocks `Write`, `Edit`, `MultiEdit`, and Bash mutation probes such as `mv`, redirection, and `tee`
+- `PostToolUse` hook is reachable from Claude Code's runtime
+- Hook latency remains within budget
+- Session-entry intake scan surfaces unprocessed transcripts/intake items and unsummarized raw session-log files
+
+Bootstrap is not considered fully complete until `/workdesk-doctor` passes.
 
 ### Five zone folders (created by bootstrap, mostly empty on day 1)
 - `personal/daily/` (the one universal practice)
@@ -926,16 +1026,19 @@ If self-check fails, install stops in a recoverable state and emits a plain-lang
 ### `_workdesk/` infrastructure (real directory; `.claude` is a symlink to it)
 - `_workdesk/operator-profile.md` — role mix, contexts, enabled tools, daily-planning style
 - `_workdesk/onboarding-state.md` — tracks per-phase onboarding completion
-- `_workdesk/settings.json` — declares PostToolUse hook for `system/events/`, PreToolUse hook for `personal/` lock, Stop hook for learnings
-- `_workdesk/scripts/post-tool-use-log.sh` — semantic-event hook script (10 classes)
-- `_workdesk/scripts/pre-tool-use-personal-lock.sh` — read-only enforcement
+- `_workdesk/settings.json` — declares PostToolUse hook for `system/events/`, PreToolUse hook for `personal/` lock, Stop hook for session-log raw dump + learnings
+- `_workdesk/scripts/post-tool-use-log.sh` — semantic-event hook script (11 classes + categorization table)
+- `_workdesk/scripts/pre-tool-use-personal-lock.sh` — read-only enforcement across `Write`, `Edit`, `MultiEdit`, `NotebookEdit`, and best-effort Bash mutation blocking
+- `_workdesk/scripts/stop-session-dump.sh` — Stop hook that dumps raw Claude session transcripts to `system/session-log/*-raw.md`
 - `_workdesk/scripts/bench-hooks.sh` — verifies p95 < 50ms
 - `_workdesk/scripts/bootstrap-vault.sh` — vault-content scaffolding helper
 - `_workdesk/skills/` — V1 core skills:
+  - `/workdesk-doctor`
   - `/onboarding` (six phases + `--status`, `--restart`, `--update-profile`)
   - `/daily-ops` (invokes daily-plan)
   - `/weekly-review` (invokes weekly-review)
-  - `/extract`
+  - `/process-transcripts`
+  - `/extract` (with `--summarize` for raw session-log files)
   - `/obsidian-markdown`
   - `/pobo` (with `--lite` flag)
   - `/promote-to-project`
@@ -955,7 +1058,7 @@ If self-check fails, install stops in a recoverable state and emits a plain-lang
 ### Existing files to reuse / adapt (paths after bootstrap migration; pre-existing content under `.claude/` moves into `_workdesk/`)
 - `_workdesk/hooks/stop-learnings.sh` — already exists, reused for `## Learnings` section + skill learnings.md scanning
 - `_workdesk/rules/per-project-accounting.md` — already exists at 8-item structure
-- `_workdesk/skills/{obsidian-cli,qmd,defuddle,pobo,daily-ops,extract,obsidian-markdown}/` — already exist, reused
+- `_workdesk/skills/{obsidian-cli,qmd,defuddle,pobo,daily-ops,extract,obsidian-markdown}/` — already exist, reused (with `/extract` extended to support `--summarize`)
 - `_workdesk/skills/onboard-client/` — adapted into the broader `/onboarding` skill or kept as a sub-flow
 - `_workdesk/agents/orchestrator.md` — kept; routes between skills
 - `system/log.md` (existing 91 lines in Khalil's current vault) — V1 does **not** migrate this; it lives only in the existing vault and bootstrap refuses to install over it (greenfield-only). V2's `/migrate` skill will translate prior `log.md` entries into `system/events/{YYYY-MM}.md` format when migration ships.
@@ -982,7 +1085,7 @@ Stress-testing the plan against six personas (consultant, founder, employee, res
 
 ### Risk 5 — Hook fragility
 **Problem:** all-event logging creates noise, performance drag, and failure points.
-**Mitigation:** narrow to 10 semantic event classes; monthly event files (no rotation hook); `shlock`-based concurrency; 50ms p95 latency budget enforced via bench script.
+**Mitigation:** narrow to 11 semantic event classes; monthly event files (no rotation hook); explicit categorization table + 5-second de-dup window; `shlock`-based concurrency; 50ms p95 latency budget enforced via bench script.
 
 ### Risk 6 — Optional tool lock-in
 **Problem:** users without GWS or transcript tools get a degraded product that feels broken.
@@ -998,7 +1101,11 @@ Stress-testing the plan against six personas (consultant, founder, employee, res
 
 ### Risk 9 — Link rot on archive
 **Problem:** polymorphic `parent:` links and `[[wikilinks]]` break when targets archive or rename.
-**Mitigation:** agent-driven moves rewrite inbound links in the same operation; operator-driven moves get caught by vault-improvements' broken-link scan.
+**Mitigation:** all container links target canonical `_brief.md` files; agent-driven moves rewrite inbound links in the same operation; operator-driven moves get caught by vault-improvements' broken-link scan.
+
+### Risk 10 — `personal/` lock is not a security boundary
+**Problem:** `personal/` protection relies on hook inspection rather than OS-level sandboxing. A sufficiently obfuscated shell command may still evade it.
+**Mitigation:** broaden PreToolUse coverage to `Write`, `Edit`, `MultiEdit`, `NotebookEdit`, and Bash; restrict Bash to a read-only allow-list; probe the invariant in `/workdesk-doctor`; document the residual risk explicitly instead of overclaiming.
 
 ## Acceptance Criteria
 
@@ -1010,7 +1117,7 @@ A consultant, founder, employee, researcher, creative, and parent each complete 
 ### Mac feasibility
 A fresh macOS install completes with:
 - one bootstrap command
-- one self-check
+- one runtime doctor check
 - zero mandatory third-party integrations
 
 ### Sparse-data usefulness
@@ -1028,26 +1135,27 @@ The operator can answer without opening implementation docs:
 
 This order matters. V1 should not ship self-improvement before it ships a stable everyday loop.
 
-1. Bootstrap skeleton + post-install self-check
+1. Bootstrap skeleton + filesystem self-check
 2. Personal lock enforcement (PreToolUse hook)
-3. Atlas core types **including `areas/`**
-4. GTD core types **including `recurring/`**
-5. Operator profile + 6-phase onboarding
-6. Daily-plan with sparse-data fallback chain
-7. Weekly-review (active from week 1)
-8. Transcript processing
-9. Event logging (`system/events/{YYYY-MM}.md`, 10 semantic classes)
-10. Vault-improvements (suppressed first 14 days)
+3. Event logging + hook plumbing (`system/events/{YYYY-MM}.md`, 11 semantic classes)
+4. `/workdesk-doctor` runtime probes
+5. Session-log raw dump + `/extract --summarize`
+6. Atlas core types **including `areas/`**
+7. GTD core types **including `recurring/`**
+8. Operator profile + 6-phase onboarding
+9. Daily-plan with sparse-data fallback chain
+10. Weekly-review (active from week 1)
+11. Transcript intake scan + `/process-transcripts`
+12. Vault-improvements (suppressed first 14 days)
 
 ## Open Questions (Deferred Until V1 Telemetry)
 
-1. **`/extract` capture mechanism** — read Claude Code's transcript file at session-end, or hook each turn? Decide before build kicks off.
-2. **Mobile capture flow** — Obsidian on iOS/iPadOS doesn't run Claude Code. Mobile drops to `system/intake/` are silent until next Mac session. Acceptable for V1; revisit if delay creates problems.
-3. **Tags vs zones** — V1 default: tags allowed, no tag-based signal logic. Revisit in V1.x if operators ask.
-4. **POBO friction** — lite-POBO mitigates. If telemetry shows projects rarely created, revisit the POBO ritual itself.
-5. **Inbox triage UX** — V1 ships `gtd/inbox/` as a folder. Single triage view (Obsidian Bases) deferred to V1.x.
-6. **Multi-device divergence** — separate `.claude/` per machine; not addressed in V1, documented as known-not-supported.
-7. **Sensitive content** — no encryption story; vault-level security is operator's responsibility (FileVault).
+1. **Mobile capture flow** — Obsidian on iOS/iPadOS doesn't run Claude Code. Mobile drops to `system/intake/` are silent until next Mac session. Acceptable for V1; revisit if delay creates problems.
+2. **Tags vs zones** — V1 default: tags allowed, no tag-based signal logic. Revisit in V1.x if operators ask.
+3. **POBO friction** — lite-POBO mitigates. If telemetry shows projects rarely created, revisit the POBO ritual itself.
+4. **Inbox triage UX** — V1 ships `gtd/inbox/` as a folder. Single triage view (Obsidian Bases) deferred to V1.x.
+5. **Multi-device divergence** — separate `.claude/` per machine; not addressed in V1, documented as known-not-supported.
+6. **Sensitive content** — no encryption story; vault-level security is operator's responsibility (FileVault).
 
 ### Cross-persona coverage check
 
@@ -1065,15 +1173,23 @@ This order matters. V1 should not ship self-improvement before it ships a stable
 End-to-end smoke test on a fresh Mac (or fresh test vault):
 
 ### 1. Bootstrap test
-- Point bootstrap at empty test vault → installs cleanly + post-install self-check passes
+- Point bootstrap at empty test vault → installs cleanly + filesystem self-check passes
 - Point bootstrap at vault with existing content → refuses gracefully with migration message
 - Point bootstrap at vault with existing `.claude/` directory → refuses install (greenfield-only; not a V1 migration target)
 - Verify `_workdesk/` is visible in Obsidian without "Show Hidden Files" plugin
 - Verify `.claude` symlink resolves to `_workdesk/`
-- Verify `personal/` is hard-locked (try to write via Claude Code → blocked by PreToolUse hook)
-- Verify hook latency under 50ms p95 via `_workdesk/scripts/bench-hooks.sh`
+- Verify `_workdesk/settings.json` is valid JSON and required hook scripts are executable
+- Verify shell write access works in `system/intake/` and cleanup succeeds
 
-### 2. Onboarding test (six phases, mixed persona)
+### 2. Doctor test
+- First Claude Code session → run `/workdesk-doctor` before onboarding
+- Verify `personal/` is hard-locked for `Write`, `Edit`, and `MultiEdit`
+- Verify Bash mutation probes such as `mv personal/test.md /tmp/`, `tee personal/test.md`, and `echo hi >> personal/test.md` are blocked
+- Verify PostToolUse hook is reachable from Claude Code runtime
+- Verify hook latency under 50ms p95 via `_workdesk/scripts/bench-hooks.sh`
+- Verify session-entry intake scan can see an unprocessed transcript and an unsummarized raw session-log file
+
+### 3. Onboarding test (six phases, mixed persona)
 - First Claude Code session → finds welcome `[REVIEW]` in `gtd/inbox/`
 - Run `/onboarding` with role mix `[consultant, parent]` → all six phases complete
 - Verify `_workdesk/operator-profile.md` reflects role mix and enabled-tools
@@ -1082,21 +1198,21 @@ End-to-end smoke test on a fresh Mac (or fresh test vault):
 - Interrupt mid-Phase 3 → re-run → resumes at Phase 3 (idempotent)
 - Run `/onboarding --status`, `--restart`, `--update-profile` — each behaves correctly
 
-### 3. Object lifecycle test
-- Drop a meeting transcript in `system/transcripts/` → processes into `atlas/meetings/{date}-{slug}.md` + creates/updates `atlas/people/`, `atlas/decisions/` as appropriate
+### 4. Object lifecycle test
+- Drop a meeting transcript in `system/transcripts/`, then start a Claude Code session → session-entry intake scan proposes `/process-transcripts`; confirm → transcript processes into `atlas/meetings/{date}-{slug}.md` + creates/updates `atlas/people/`, `atlas/decisions/` as appropriate
 - Verify source frontmatter on transcript flips `processed: true` with `processed-into:` backlinks
 - Verify `system/events/{YYYY-MM}.md` records `source-processed` + `object-created` lines
 - Verify above-threshold creations (≥0.7 confidence) drop `[REVIEW]` pointers in `gtd/inbox/` (and confirm 7-per-session cap holds)
 - Verify sub-threshold (<0.7) detections stay silent or ask inline — never drop a `[REVIEW]`
 
-### 4. Signal test — three data conditions
+### 5. Signal test — three data conditions
 - **Rich data:** run `/daily-ops` with calendar + transcripts + active areas → produces full daily-plan
 - **Sparse data:** disable connectors, leave only 3 manual notes → daily-plan still produces useful output via fallback chain
 - **Cold start:** empty vault post-bootstrap → daily-plan produces setup-oriented plan, not hollow summary
 - Run `/weekly-review` end of week 1 → produces `intel/briefings/weekly/{date}-weekly-review.md` with proposed closures, promotions, cleanup
 - Verify vault-improvements is suppressed for first 14 days, fires on day 15
 
-### 5. GTD lifecycle test
+### 6. GTD lifecycle test
 - `/pobo --lite` produces 3-field stub project; `_brief.md`, `_status.md`, empty `plan.md`, full 8-item folder
 - Full `/pobo` produces project with populated `_brief.md`, `_status.md`, `plan.md`
 - Promote next physical action → creates `gtd/actions/next/{slug}.md` with `parent:` link
@@ -1104,28 +1220,33 @@ End-to-end smoke test on a fresh Mac (or fresh test vault):
 - Move action to `gtd/archive/actions/{year-month}/` → archive structure works
 - `/promote-to-project {action-slug}` upgrades an action to a full project folder
 
-### 6. Recurring lifecycle test
+### 7. Recurring lifecycle test
 - Create `gtd/recurring/schedules/weekly-payroll.md` with `cadence: weekly`, `next_due: 2026-05-01`
 - weekly-review surfaces it as due
 - Promote to action → `gtd/actions/next/weekly-payroll-2026-05-01.md` with `parent:` link
 - Mark action complete → `next_due` rolls to 2026-05-08; `action-completed` event logged
 - `/checklist {slug}` materializes `gtd/recurring/checklists/publish-workflow.md` items as a sequence of actions
 
-### 7. Meta-skill test
+### 8. Meta-skill test
 - Run `/define-object` for an emergent type (e.g., `companies/`) → JTBD interview produces declaration in `_workdesk/objects/` + scaffolded folder
 - Run `/define-signal` → produces declaration with anchors + traversal + output-format + `## Learnings` section seeded empty
 - Run `/define-tool` → adds tool reference rule + permission updates
 
-### 8. Hook + log test
-- Verify PostToolUse hook only logs the 10 semantic event classes (not every Write/Edit/Bash)
+### 9. Hook + log test
+- Verify PostToolUse hook only logs the 11 semantic event classes (not every `Write` / `Edit` / `MultiEdit` / `Bash`)
 - Verify month rollover: cross midnight on month boundary → next event lands in new `system/events/{YYYY-MM}.md`
 - Verify lock contention: parallel writes serialize cleanly, dropped entries warn but don't block
 
-### 9. Link integrity test
-- Archive a project → inbound `parent:` links rewrite; archive recorded in `events/`
+### 10. Link integrity test
+- Archive a project → inbound canonical `_brief.md` `parent:` links rewrite; archive recorded in `events/`
 - Manually drag a project to `gtd/archive/` in Obsidian → next vault-improvements scan flags broken links as `[REVIEW]`
 
-### 10. Codex review (this plan)
+### 11. Claim provenance + cadence test
+- Create a person note with one `source:` in frontmatter, then append a second fact from a later meeting using an inline footnote citation
+- Verify `weekly-review` and `daily-plan` can flag a project or initiative as stale only when `last-touched` exceeds `expected-cadence`
+- Verify `expected-cadence: none` suppresses stale-context warnings
+
+### 12. Codex review (this plan)
 - Run `/ultrareview` against this plan file before any implementation begins
 - Codex returns confidence rating + adversarial findings
 - Address findings in plan before V1 build kicks off
