@@ -7,3 +7,7 @@ node_modules/
 .env
 .env.*
 !.env.example
+
+# Harness scratch state (Claude Code session locks, etc.)
+# When V1 ships, .claude/ becomes the symlink alias for _workdesk/ and is created by bootstrap.
+.claude/
